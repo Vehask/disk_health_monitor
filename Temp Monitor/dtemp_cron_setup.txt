@@ -1,0 +1,23 @@
+# Disk Temperature Monitor Cron Setup
+# 
+# To set up the disk temperature monitor to run every 5 minutes:
+#
+# 1. Make the script executable:
+#    chmod +x /path/to/dtemp_monitor.sh
+#
+# 2. Edit your crontab:
+#    sudo nano /etc/crontab
+#
+# 3. Add this line to run every 5 minutes:
+*/5 * * * * /path/to/dtemp_monitor.sh
+
+# Optional: Add error logging to a separate file:
+*/5 * * * * /path/to/dtemp_monitor.sh 2>>/var/log/diskhealth/dtemp_errors.log
+
+# Explanation of the cron syntax:
+# */5 * * * * means:
+# - */5: Every 5 minutes
+# - *: Every hour
+# - *: Every day of month
+# - *: Every month
+# - *: Every day of week
