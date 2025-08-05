@@ -11,9 +11,14 @@ STATE_DIR="/var/log/diskhealth/state"
 EMAIL_RECIPIENT="admin@yourdomain.com"  # Change this to your email
 SEND_EMAIL=true  # Set to false to disable email alerts
 TEST_EMAIL_ALERT=false  # Set to true to send a test email alert
-TEMP_THRESHOLD=55  # Temperature threshold in Celsius
+TEMP_THRESHOLD=55  # Temperature threshold in Celsius for email alerts
 ALERT_DURATION=30  # Minutes to wait before sending alert
 EXCLUDED_DISKS=("/dev/sdo")  # Add devices to exclude from monitoring
+
+# Color threshold settings (adjust these values to customize color ranges)
+GREEN_TEMP_MAX=35  # Green color for temperatures up to this value (°C)
+YELLOW_TEMP_MAX=45  # Yellow color for temperatures between GREEN_TEMP_MAX and this value (°C)
+# Red color will be used for temperatures above YELLOW_TEMP_MAX
 
 # Color codes for temperature display
 RED='\033[0;31m'
@@ -26,9 +31,9 @@ NC='\033[0m' # No Color
 get_temp_color() {
     local temp="$1"
     if [[ "$temp" =~ ^[0-9]+$ ]]; then
-        if [[ "$temp" -lt 35 ]]; then
+        if [[ "$temp" -le "$GREEN_TEMP_MAX" ]]; then
             echo "$GREEN"
-        elif [[ "$temp" -le 45 ]]; then
+        elif [[ "$temp" -le "$YELLOW_TEMP_MAX" ]]; then
             echo "$YELLOW"
         else
             echo "$RED"
@@ -404,8 +409,14 @@ calculate_and_log_daily_stats() {
         fi
     fi
     
-    # Log daily statistics (Min, Max, Avg, Daily Max)
-    log_stats_message "STATS: $disk - Min: ${min_temp}°C, Max: ${max_temp}°C, Avg: ${avg_temp}°C, Daily Max: ${daily_max}°C (${daily_max_date})"
+    # Get colors for each temperature value
+    local min_color=$(get_temp_color "$min_temp")
+    local max_color=$(get_temp_color "$max_temp")
+    local avg_color=$(get_temp_color "$avg_temp")
+    local daily_max_color=$(get_temp_color "$daily_max")
+    
+    # Log daily statistics with colors (Min, Max, Avg, Daily Max)
+    log_stats_message "STATS: $disk - Min: ${min_color}${min_temp}°C${NC}, Max: ${max_color}${max_temp}°C${NC}, Avg: ${avg_color}${avg_temp}°C${NC}, Daily Max: ${daily_max_color}${daily_max}°C${NC} (${daily_max_date})"
 }
 
 # Main execution
