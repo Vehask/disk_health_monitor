@@ -196,7 +196,7 @@ Enable test emails by setting `TEST_EMAIL_ALERT=true` in the configuration. The 
 ```
 /usr/local/bin/disk-monitoring/
 ├── dhmon.sh                    # Health monitoring script
-├── dtemp_monitor.sh            # Temperature monitoring script
+└── dtemp_monitor.sh            # Temperature monitoring script
 
 /var/log/diskhealth/
 ├── dhmon.log                   # Health monitor logs (monthly rotation)
@@ -280,3 +280,4 @@ Feel free to submit issues, feature requests, or pull requests to improve these 
 ## License
 
 These scripts are provided as-is for educational and operational use in Proxmox environments.
+
