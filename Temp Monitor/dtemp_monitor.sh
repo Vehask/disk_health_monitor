@@ -16,8 +16,8 @@ ALERT_DURATION=30  # Minutes to wait before sending alert
 EXCLUDED_DISKS=("/dev/sdo")  # Add devices to exclude from monitoring
 
 # Color threshold settings (adjust these values to customize color ranges)
-GREEN_TEMP_MAX=35  # Green color for temperatures up to this value (°C)
-YELLOW_TEMP_MAX=45  # Yellow color for temperatures between GREEN_TEMP_MAX and this value (°C)
+GREEN_TEMP_MAX=40  # Green color for temperatures up to this value (°C)
+YELLOW_TEMP_MAX=50  # Yellow color for temperatures between GREEN_TEMP_MAX and this value (°C)
 # Red color will be used for temperatures above YELLOW_TEMP_MAX
 
 # Color codes for temperature display
@@ -57,19 +57,23 @@ log_temp_message() {
 # Function to log statistics (for weekly logs)
 log_stats_message() {
     local message="$1"
-    local color="$2"
-    if [[ -n "$color" ]]; then
-        echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${color}${message}${NC}" >> "$STATS_LOGFILE"
-    else
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" >> "$STATS_LOGFILE"
-    fi
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $message" >> "$STATS_LOGFILE"
 }
 
 # Function to log warning to stats file
 log_stats_warning() {
     local disk="$1"
     local temperature="$2"
-    log_stats_message "**Warning** $disk temperature ${temperature}°C over threshold" "$RED"
+    local disk_info_file="$STATE_DIR/$(basename "$disk")_info"
+    local temp_color=$(get_temp_color "$temperature")
+    
+    # Get disk information
+    local disk_info="Unknown Unknown - Unknown"
+    if [[ -f "$disk_info_file" ]]; then
+        disk_info=$(cat "$disk_info_file" 2>/dev/null || echo "Unknown Unknown - Unknown")
+    fi
+    
+    log_stats_message "${RED}**Warning**${NC} $disk -- $disk_info temperature ${temp_color}${temperature}°C${NC} over threshold"
 }
 
 # Function to handle daily log rotation (midnight wipe)
@@ -127,6 +131,54 @@ check_dependencies() {
         log_temp_message "Install with: apt-get install ${missing_deps[*]}"
         exit 1
     fi
+}
+
+# Function to get disk information (manufacturer, capacity, serial)
+get_disk_info() {
+    local disk="$1"
+    local disk_info
+    local manufacturer="Unknown"
+    local capacity="Unknown"
+    local serial="Unknown"
+    
+    # Check if disk is accessible
+    if [[ ! -e "$disk" ]]; then
+        echo "$manufacturer ${capacity} - $serial"
+        return 1
+    fi
+    
+    # Get disk information using smartctl
+    disk_info=$(smartctl -i "$disk" 2>/dev/null)
+    
+    if [[ $? -eq 0 && -n "$disk_info" ]]; then
+        # Extract manufacturer/vendor
+        manufacturer=$(echo "$disk_info" | grep -iE "(Vendor|Model Family|Device Model)" | head -1 | sed 's/.*: *//' | awk '{print $1}' | tr -d ',')
+        if [[ -z "$manufacturer" || "$manufacturer" == "Unknown" ]]; then
+            manufacturer=$(echo "$disk_info" | grep -iE "Model Number" | sed 's/.*: *//' | awk '{print $1}' | tr -d ',')
+        fi
+        
+        # Extract capacity
+        capacity=$(echo "$disk_info" | grep -iE "(User Capacity|Total NVM Capacity)" | head -1 | sed 's/.*: *//' | grep -oE '[0-9,.]+ [KMGTPB]+' | head -1)
+        if [[ -z "$capacity" ]]; then
+            capacity=$(echo "$disk_info" | grep -iE "Capacity" | head -1 | sed 's/.*: *//' | grep -oE '[0-9,.]+ [KMGTPB]+' | head -1)
+        fi
+        
+        # Extract serial number
+        serial=$(echo "$disk_info" | grep -iE "Serial [Nn]umber" | sed 's/.*: *//' | tr -d ' ')
+        
+        # Clean up and format
+        [[ -z "$manufacturer" || "$manufacturer" == "" ]] && manufacturer="Unknown"
+        [[ -z "$capacity" || "$capacity" == "" ]] && capacity="Unknown"
+        [[ -z "$serial" || "$serial" == "" ]] && serial="Unknown"
+        
+        # Truncate serial if too long
+        if [[ ${#serial} -gt 20 ]]; then
+            serial="${serial:0:17}..."
+        fi
+    fi
+    
+    echo "$manufacturer $capacity - $serial"
+    return 0
 }
 
 # Function to get disk temperature
@@ -293,13 +345,18 @@ check_temperature_alerts() {
 update_temperature_stats() {
     local disk="$1"
     local temperature="$2"
+    local disk_info="$3"
     local stats_file="$STATE_DIR/$(basename "$disk")_stats"
     local daily_max_file="$STATE_DIR/$(basename "$disk")_daily_max"
+    local disk_info_file="$STATE_DIR/$(basename "$disk")_info"
     local current_date=$(date '+%Y-%m-%d')
     
     if [[ "$temperature" == "N/A" || ! "$temperature" =~ ^[0-9]+$ ]]; then
         return
     fi
+    
+    # Store disk info for stats logging
+    echo "$disk_info" > "$disk_info_file"
     
     # Add temperature to daily stats
     echo "$temperature" >> "$stats_file"
@@ -374,9 +431,16 @@ calculate_and_log_daily_stats() {
     local disk="$1"
     local stats_file="$2"
     local daily_max_file="$3"
+    local disk_info_file="$STATE_DIR/$(basename "$disk")_info"
     
     if [[ ! -f "$stats_file" || ! -s "$stats_file" ]]; then
         return
+    fi
+    
+    # Get disk information
+    local disk_info="Unknown Unknown - Unknown"
+    if [[ -f "$disk_info_file" ]]; then
+        disk_info=$(cat "$disk_info_file" 2>/dev/null || echo "Unknown Unknown - Unknown")
     fi
     
     # Calculate statistics for the day
@@ -398,25 +462,13 @@ calculate_and_log_daily_stats() {
     
     local avg_temp=$((sum / count))
     
-    # Get daily maximum temperature
-    local daily_max="N/A"
-    local daily_max_date=""
-    if [[ -f "$daily_max_file" ]]; then
-        daily_max_date=$(head -1 "$daily_max_file" 2>/dev/null | cut -d' ' -f1)
-        daily_max=$(head -1 "$daily_max_file" 2>/dev/null | cut -d' ' -f2)
-        if [[ -z "$daily_max" ]]; then
-            daily_max="N/A"
-        fi
-    fi
-    
     # Get colors for each temperature value
     local min_color=$(get_temp_color "$min_temp")
     local max_color=$(get_temp_color "$max_temp")
     local avg_color=$(get_temp_color "$avg_temp")
-    local daily_max_color=$(get_temp_color "$daily_max")
     
-    # Log daily statistics with colors (Min, Max, Avg, Daily Max)
-    log_stats_message "STATS: $disk - Min: ${min_color}${min_temp}°C${NC}, Max: ${max_color}${max_temp}°C${NC}, Avg: ${avg_color}${avg_temp}°C${NC}, Daily Max: ${daily_max_color}${daily_max}°C${NC} (${daily_max_date})"
+    # Log daily statistics with disk info and colors (Min, Max, Avg only - Daily Max removed as redundant)
+    log_stats_message "STATS: $disk -- $disk_info - Min: ${min_color}${min_temp}°C${NC}, Max: ${max_color}${max_temp}°C${NC}, Avg: ${avg_color}${avg_temp}°C${NC}"
 }
 
 # Main execution
@@ -482,15 +534,17 @@ main() {
     # Monitor each disk
     for disk in $disks; do
         local temperature
+        local disk_info
         temperature=$(get_disk_temperature "$disk")
+        disk_info=$(get_disk_info "$disk")
         
         if [[ "$temperature" != "N/A" ]]; then
             local temp_color=$(get_temp_color "$temperature")
-            log_temp_message "TEMP: $disk = ${temperature}°C" "$temp_color"
+            log_temp_message "TEMP: $disk -- $disk_info = ${temperature}°C" "$temp_color"
             check_temperature_alerts "$disk" "$temperature"
-            update_temperature_stats "$disk" "$temperature"
+            update_temperature_stats "$disk" "$temperature" "$disk_info"
         else
-            log_temp_message "TEMP: $disk = N/A (unable to read temperature)" "$NC"
+            log_temp_message "TEMP: $disk -- $disk_info = N/A (unable to read temperature)" "$NC"
         fi
     done
     

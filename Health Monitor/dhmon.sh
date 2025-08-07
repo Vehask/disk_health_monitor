@@ -7,6 +7,7 @@
 LOGFILE="/var/log/diskhealth/dhmon.log"
 EMAIL_RECIPIENT="CHANGE-TO@YOUR.EMAIL"  # Change this to your email
 SEND_EMAIL=true  # Set to false to disable email alerts
+TEST_EMAIL_ALERT=false  # Set to true to send a test email alert
 EXCLUDED_DISKS=("/dev/sdo")  # Add devices to exclude from monitoring
 
 # Function to handle monthly log rotation
@@ -75,6 +76,33 @@ send_alert() {
     fi
 }
 
+# Function to send test email alert
+send_test_email() {
+    if [[ "$SEND_EMAIL" == true ]]; then
+        {
+            echo "Disk Health Monitor Test Email"
+            echo "=============================="
+            echo "Hostname: $(hostname)"
+            echo "Date: $(date)"
+            echo ""
+            echo "This is a test email to verify that the health monitoring email alert system is working correctly."
+            echo "If you receive this email, the disk health monitoring email alerts are functioning properly."
+            echo ""
+            echo "Configuration:"
+            echo "- Email Recipient: $EMAIL_RECIPIENT"
+            echo "- Monitoring Excluded Disks: ${EXCLUDED_DISKS[*]}"
+        } | mail -s "Health Monitor Test on $(hostname)" "$EMAIL_RECIPIENT" 2>> "$LOGFILE"
+        
+        if [[ $? -eq 0 ]]; then
+            log_message "Test email sent successfully to $EMAIL_RECIPIENT"
+        else
+            log_message "ERROR: Failed to send test email to $EMAIL_RECIPIENT"
+        fi
+    else
+        log_message "Email alerts are disabled - skipping test email"
+    fi
+}
+
 # Function to check disk health
 check_disk_health() {
     local disk="$1"
@@ -128,6 +156,12 @@ main() {
     
     # Start logging
     log_message "=== Disk Health Monitor Started ==="
+    
+    # Send test email if enabled
+    if [[ "$TEST_EMAIL_ALERT" == true ]]; then
+        log_message "Sending test email alert..."
+        send_test_email
+    fi
     
     # Check dependencies
     check_dependencies
