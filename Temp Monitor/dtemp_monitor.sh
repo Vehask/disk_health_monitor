@@ -175,9 +175,20 @@ get_disk_info() {
         if [[ ${#serial} -gt 20 ]]; then
             serial="${serial:0:17}..."
         fi
+        
+        # Format manufacturer and capacity with consistent widths
+        if [[ "$manufacturer" != "Unknown" && "$capacity" != "Unknown" ]]; then
+            manufacturer=$(printf "%-12s" "$manufacturer")
+            capacity=$(printf "%-8s" "$capacity")
+        fi
     fi
     
-    echo "$manufacturer $capacity - $serial"
+    # Format manufacturer and capacity with dash separator
+    if [[ "$manufacturer" != "Unknown" && "$capacity" != "Unknown" ]]; then
+        echo "$manufacturer - $capacity - $serial"
+    else
+        echo "$manufacturer $capacity - $serial"
+    fi
     return 0
 }
 
@@ -390,9 +401,15 @@ update_temperature_stats() {
 handle_daily_stats_update() {
     local current_hour=$(date '+%H')
     local current_minute=$(date '+%M')
+    local current_date=$(date '+%Y-%m-%d')
+    local stats_flag_file="$STATE_DIR/daily_stats_completed_$current_date"
     
-    # If it's close to midnight (00:00-00:05), calculate and log daily stats
-    if [[ "$current_hour" == "00" && "$current_minute" -lt 6 ]]; then
+    # Only run stats once per day at midnight (00:00-00:05) and if not already completed today
+    if [[ "$current_hour" == "00" && "$current_minute" -lt 6 && ! -f "$stats_flag_file" ]]; then
+        # Add daily separator to stats log
+        log_stats_message ""
+        log_stats_message "==================== Daily Statistics for $current_date ===================="
+        
         # Get list of disks to process stats for
         local all_disks
         all_disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print "/dev/"$1}')
@@ -423,6 +440,12 @@ handle_daily_stats_update() {
                 calculate_and_log_daily_stats "$disk" "$stats_file" "$daily_max_file"
             fi
         done
+        
+        # Create flag file to prevent duplicate stats for today
+        touch "$stats_flag_file"
+        
+        # Clean up old flag files (older than 3 days)
+        find "$STATE_DIR" -name "daily_stats_completed_*" -mtime +3 -delete 2>/dev/null || true
     fi
 }
 
@@ -467,8 +490,30 @@ calculate_and_log_daily_stats() {
     local max_color=$(get_temp_color "$max_temp")
     local avg_color=$(get_temp_color "$avg_temp")
     
-    # Log daily statistics with disk info and colors (Min, Max, Avg only - Daily Max removed as redundant)
-    log_stats_message "STATS: $disk -- $disk_info - Min: ${min_color}${min_temp}°C${NC}, Max: ${max_color}${max_temp}°C${NC}, Avg: ${avg_color}${avg_temp}°C${NC}"
+    # Format disk name for consistent alignment (16 characters)
+    local formatted_disk=$(printf "%-16s" "$disk")
+    
+    # Split disk info into manufacturer/capacity and serial for better formatting
+    # Handle the new format: "Manufacturer - Capacity - Serial"
+    local manufacturer_capacity
+    local serial
+    
+    if [[ "$disk_info" =~ ^(.+)\ -\ (.+)\ -\ (.+)$ ]]; then
+        # Three-part format: "Manufacturer - Capacity - Serial"
+        manufacturer_capacity="${BASH_REMATCH[1]} - ${BASH_REMATCH[2]}"
+        serial="${BASH_REMATCH[3]}"
+    else
+        # Fallback for two-part format: "Manufacturer Capacity - Serial"
+        manufacturer_capacity=$(echo "$disk_info" | sed 's/ - [^-]*$//')
+        serial=$(echo "$disk_info" | sed 's/.* - //')
+    fi
+    
+    # Format manufacturer/capacity (24 characters) and serial (20 characters)
+    local formatted_mfg_cap=$(printf "%-24s" "$manufacturer_capacity")
+    local formatted_serial=$(printf "%-20s" "$serial")
+    
+    # Log daily statistics with improved formatting
+    log_stats_message "STATS: ${formatted_disk} -- ${formatted_mfg_cap} - ${formatted_serial}  - Min: ${min_color}${min_temp}°C${NC}, Max: ${max_color}${max_temp}°C${NC}, Avg: ${avg_color}${avg_temp}°C${NC}"
 }
 
 # Main execution
@@ -538,13 +583,35 @@ main() {
         temperature=$(get_disk_temperature "$disk")
         disk_info=$(get_disk_info "$disk")
         
+        # Format disk name for consistent alignment (16 characters)
+        local formatted_disk=$(printf "%-16s" "$disk")
+        
+        # Split disk info into manufacturer/capacity and serial for better formatting
+        # Handle the new format: "Manufacturer - Capacity - Serial"
+        local manufacturer_capacity
+        local serial
+        
+        if [[ "$disk_info" =~ ^(.+)\ -\ (.+)\ -\ (.+)$ ]]; then
+            # Three-part format: "Manufacturer - Capacity - Serial"
+            manufacturer_capacity="${BASH_REMATCH[1]} - ${BASH_REMATCH[2]}"
+            serial="${BASH_REMATCH[3]}"
+        else
+            # Fallback for two-part format: "Manufacturer Capacity - Serial"
+            manufacturer_capacity=$(echo "$disk_info" | sed 's/ - [^-]*$//')
+            serial=$(echo "$disk_info" | sed 's/.* - //')
+        fi
+        
+        # Format manufacturer/capacity (24 characters) and serial (20 characters)
+        local formatted_mfg_cap=$(printf "%-24s" "$manufacturer_capacity")
+        local formatted_serial=$(printf "%-20s" "$serial")
+        
         if [[ "$temperature" != "N/A" ]]; then
             local temp_color=$(get_temp_color "$temperature")
-            log_temp_message "TEMP: $disk -- $disk_info = ${temperature}°C" "$temp_color"
+            log_temp_message "TEMP: ${formatted_disk} -- ${formatted_mfg_cap} - ${formatted_serial}  = ${temperature}°C" "$temp_color"
             check_temperature_alerts "$disk" "$temperature"
             update_temperature_stats "$disk" "$temperature" "$disk_info"
         else
-            log_temp_message "TEMP: $disk -- $disk_info = N/A (unable to read temperature)" "$NC"
+            log_temp_message "TEMP: ${formatted_disk} -- ${formatted_mfg_cap} - ${formatted_serial}  = N/A (unable to read temperature)" "$NC"
         fi
     done
     
